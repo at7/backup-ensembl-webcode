@@ -83,26 +83,70 @@ sub get_table_headings {
 
 
 sub content_results {
-  my $self   = shift;
-  my $object = $self->object;
-  my $hub    = $self->hub;
+  my $self         = shift;
+  my $object       = $self->object;
+  my $variant      = $object->Obj;
+  my $hub          = $self->hub;
   my $species_defs = $hub->species_defs;
 
-
-  my $first_variant_name = $hub->param('first_variant_name');
+  my $first_variant_name  = $hub->param('first_variant_name');
   my $second_variant_name = $hub->param('second_variant_name');
 
-  return unless defined $second_variant_name;
+  return unless $second_variant_name;
   $second_variant_name =~ s/^\W+//;
   $second_variant_name =~ s/\s+$//;
 
   # set path information for LD calculations
   $Bio::EnsEMBL::Variation::DBSQL::LDFeatureContainerAdaptor::BINARY_FILE = $species_defs->ENSEMBL_CALC_GENOTYPES_FILE;
-  $Bio::EnsEMBL::Variation::DBSQL::LDFeatureContainerAdaptor::TMP_PATH = $species_defs->
+  $Bio::EnsEMBL::Variation::DBSQL::LDFeatureContainerAdaptor::TMP_PATH = $species_defs->ENSEMBL_TMP_TMP;
 
-  return qq{<div>$first_variant_name<br>$second_variant_name</div>};
+  my $ldfca = $variant->adaptor->db->get_LDFeatureContainerAdaptor;
+  my $va = $variant->adaptor->db->get_VariationAdaptor;
+  my $second_variant = $va->fetch_by_name($second_variant_name);
 
+  if (!$second_variant) {
+    return qq{<div>Could not fetch variant object for variant $second_variant_name</div>};
+  }
 
+  my $source = $variant->source_name;
+  my $max_distance = $hub->param('max_distance') || 50000;
+  my $min_r2 = defined $hub->param('min_r2') ? $hub->param('min_r2') : 0.8;
+  my $min_d_prime = defined $hub->param('min_d_prime') ? $hub->param('min_d_prime') : 0.8;
+  my $min_p_log = $hub->param('min_p_log');
+  my $only_phenotypes = $hub->param('only_phenotypes') eq 'yes';
+  my %mappings = %{$object->variation_feature_mapping}; # determine correct SNP location
+  my ($vf, $loc);
+
+  if (keys %mappings == 1) {
+    ($loc) = values %mappings; 
+  } else {
+    $loc = $mappings{$hub->param('vf')};
+  }
+  # get the VF that matches the selected location
+  foreach (@{$object->get_variation_features}) {
+    if ($_->seq_region_start == $loc->{'start'}) {
+      $vf = $_;
+      last;
+    }
+  }
+
+  my $vfs = $second_variant->get_all_VariationFeatures;
+
+  my @ld_values = @{$ldfca->fetch_by_VariationFeatures([$vf, $vfs->[0]])->get_all_ld_values(1)};  
+  my $return_html = '';  
+  foreach my $hash (@ld_values) {
+    my $variation1 = $hash->{variation_name1};
+    my $variation2 = $hash->{variation_name2};
+    my $r2 = $hash->{r2};
+    my $d_prime = $hash->{d_prime};
+    my $population_id = $hash->{population_id};
+    $return_html = $return_html . "<div>$variation1 $variation2 $r2 $d_prime $population_id</div><br>";
+  } 
+ 
+
+#  return qq{<div>$first_variant_name<br>$second_variant_name<br>$flat_ld_values<br>@ld_values</div>};
+
+  return $return_html;
 
 
 =begin
