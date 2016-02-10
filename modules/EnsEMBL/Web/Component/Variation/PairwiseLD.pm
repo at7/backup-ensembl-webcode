@@ -39,7 +39,7 @@ sub content {
   
   return $self->_info('A unique location can not be determined for this Variation', $object->not_unique_location) if $object->not_unique_location;  
 
-  my $url = $self->ajax_url('results', { first_variant_name => undef, second_variant_name => undef });  
+  my $url = $self->ajax_url('results', { focus_variant_name => $variant_name, second_variant_name => undef });  
   my $id  = $self->id;  
   my $second_variant_name = '';
   return sprintf('
@@ -47,10 +47,10 @@ sub content {
     <div class="navbar print_hide" style="padding-left:5px">
       <input type="hidden" class="panel_type" value="Content" />
       <form class="update_panel" action="#">
-        <label for="variant">First variant: %s</label><br>
+        <label for="variant">Focus variant: %s</label><br>
         <label for="variant">Enter the name for the second variant:</label>
         <input type="text" name="second_variant_name" id="variant" value="%s" size="30"/>
-        <input type="hidden" name="first_variant_name" value="%s" />
+        <input type="hidden" name="focus_variant_name" value="%s" />
         <input type="hidden" name="panel_id" value="%s" />
         <input type="hidden" name="url" value="%s" />
         <input type="hidden" name="element" value=".results" />
@@ -72,15 +72,13 @@ sub format_parent {
 
 sub get_table_headings {
   return [
-    { key => 'Sample',      title => 'Sample<br /><small>(Male/Female/Unknown)</small>',     sort => 'html', width => '20%', help => 'Sample name and gender'         },
-    { key => 'Genotype',    title => 'Genotype<br /><small>(forward strand)</small>',        sort => 'html', width => '15%', help => 'Genotype on the forward strand' },
-    { key => 'Description', title => 'Description',                                          sort => 'html'                                                           },
-    { key => 'Population',  title => 'Population(s)',                                        sort => 'html'                                                           },
-    { key => 'Father',      title => 'Father',                                               sort => 'none'                                                           },
-    { key => 'Mother',      title => 'Mother',                                               sort => 'none'                                                           }
+    { key => 'Variant1', title => 'Focus Variant', sort => '' },
+    { key => 'Variant2', title => 'Variant 2', sort => '' },
+    { key => 'Population', title => 'Population', sort => 'html', align => 'left' },    
+    { key => 'r2', title => 'r<sup>2</sup>', sort => 'numeric', align => 'left' },
+    { key => 'd_prime', title => q{D'}, sort => 'numeric' },
   ];
 }
-
 
 sub content_results {
   my $self         = shift;
@@ -89,7 +87,7 @@ sub content_results {
   my $hub          = $self->hub;
   my $species_defs = $hub->species_defs;
 
-  my $first_variant_name  = $hub->param('first_variant_name');
+  my $focus_variant_name  = $variant->name;
   my $second_variant_name = $hub->param('second_variant_name');
 
   return unless $second_variant_name;
@@ -102,6 +100,8 @@ sub content_results {
 
   my $ldfca = $variant->adaptor->db->get_LDFeatureContainerAdaptor;
   my $va = $variant->adaptor->db->get_VariationAdaptor;
+  my $pa = $variant->adaptor->db->get_PopulationAdaptor;
+
   my $second_variant = $va->fetch_by_name($second_variant_name);
 
   if (!$second_variant) {
@@ -130,114 +130,42 @@ sub content_results {
     }
   }
 
-  my $vfs = $second_variant->get_all_VariationFeatures;
+  my $vfs2 = $second_variant->get_all_VariationFeatures;
+  my @vfs = ($vf, @$vfs2);
+  my @ld_populations = @{$pa->fetch_all_LD_Populations};
+  my $rows = [];
 
-  my @ld_values = @{$ldfca->fetch_by_VariationFeatures([$vf, $vfs->[0]])->get_all_ld_values(1)};  
-  my $return_html = '';  
-  foreach my $hash (@ld_values) {
-    my $variation1 = $hash->{variation_name1};
-    my $variation2 = $hash->{variation_name2};
-    my $r2 = $hash->{r2};
-    my $d_prime = $hash->{d_prime};
-    my $population_id = $hash->{population_id};
-    $return_html = $return_html . "<div>$variation1 $variation2 $r2 $d_prime $population_id</div><br>";
-  } 
- 
-
-#  return qq{<div>$first_variant_name<br>$second_variant_name<br>$flat_ld_values<br>@ld_values</div>};
-
-  return $return_html;
-
-
-=begin
-
-  my $sample = $hub->param('sample');
-  
-  return unless defined $sample;
-  
-  $sample =~ s/^\W+//;
-  $sample =~ s/\s+$//;
-  
-  my %rows;
-  my $flag_children = 0;
-  my $html;
-  my %sample_data;
-   
-  my $sample_gt_objs = $object->sample_genotypes_obj;
-    
-  # Selects the sample genotypes where their sample names match the searched name
-  my @matching_sample_gt_objs = (length($sample) > 1 ) ? grep { $_->sample->name =~ /$sample/i } @$sample_gt_objs : ();
-    
-  if (scalar (@matching_sample_gt_objs)) {
-    my %sample_data;
-    my $rows;
-    my $al_colours = $self->object->get_allele_genotype_colours;    
-
-    # Retrieve sample & sample genotype information
-    foreach my $sample_gt_obj (@matching_sample_gt_objs) {
-    
-      my $genotype = $object->sample_genotype($sample_gt_obj);
-      next if $genotype eq '(indeterminate)';
-        $genotype =~ s/$al/$al_colours->{$al}/g;
+  foreach my $ld_population (@ld_populations) {
+    my @ld_values = @{$ldfca->fetch_by_VariationFeatures(\@vfs, $ld_population)->get_all_ld_values(1)};  
+    foreach my $hash (@ld_values) {
+      my $variation1 = $hash->{variation_name1};
+      my $variation2 = $hash->{variation_name2};
+      next unless ($variation1 eq $focus_variant_name || $variation2 eq $focus_variant_name);
+      next unless ($variation1 eq $second_variant_name || $variation2 eq $second_variant_name);
+      if ($variation1 ne $focus_variant_name) {
+        ($variation1, $variation2) = ($variation2, $variation1);
       }
-      
-      my $sample_obj = $sample_gt_obj->sample;
-      my $sample_id  = $sample_obj->dbID;
-     
-      my $sample_name  = $sample_obj->name;
-      my $sample_label = $sample_name;
-      if ($sample_label =~ /(1000\s*genomes|hapmap)/i) {
-        my @composed_name = split(':', $sample_label);
-        $sample_label = $composed_name[$#composed_name];
-      }
+      my $r2 = $hash->{r2};
+      my $d_prime = $hash->{d_prime};
+      my $population_id = $hash->{population_id};
 
-      my $gender        = $sample_obj->individual->gender;
-      my $description   = $object->description($sample_obj);
-         $description ||= '-';
-      my $population    = $self->get_all_populations($sample_obj);  
-         
-      my %parents;
-      foreach my $parent ('father','mother') {
-         my $parent_data   = $object->parent($sample_obj->individual, $parent);
-         $parents{$parent} = $self->format_parent($parent_data);
-      }         
-    
-      # Format the content of each cell of the line
       my $row = {
-        Sample      => sprintf("<small id=\"%s\">%s (%s)</small>", $sample_name, $sample_label, substr($gender, 0, 1)),
-        Genotype    => "<small>$genotype</small>",
-        Description => "<small>$description</small>",
-        Population  => "<small>$population</small>",
-        Father      => "<small>$parents{father}</small>",
-        Mother      => "<small>$parents{mother}</small>",
-        Children    => '-'
+        Variant1 => $variation1, 
+        Variant2 => $variation2,
+        Population => $ld_population->name,  
+        r2 => $r2,
+        d_prime => $d_prime,
       };
-    
-      # Children
-      my $children      = $object->child($sample_obj->individual);
-      my @children_list = map { sprintf "<small>$_ (%s)</small>", substr($children->{$_}[0], 0, 1) } keys %{$children};
-    
-      if (@children_list) {
-        $row->{'Children'} = join ', ', @children_list;
-        $flag_children = 1;
-      }
-        
       push @$rows, $row;
-    }
-
-    my $columns = $self->get_table_headings;
-    push @$columns, { key => 'Children', title => 'Children<br /><small>(Male/Female)</small>', sort => 'none', help => 'Children names and genders' } if $flag_children;
-    
-    my $sample_table = $self->new_table($columns, $rows, { data_table => 1, download_table => 1, sorting => [ 'Sample asc' ], data_table_config => {iDisplayLength => 25} });
-    $html .= '<div style="margin:0px 0px 50px;padding:0px"><h2>Results for "'.$sample.'" ('.scalar @$rows.')</h2>'.$sample_table->render.'</div>';
-
-  } else {
-    $html .= $self->warning_message($sample);
+    } 
   }
+ 
+  my $columns = $self->get_table_headings;
+  my $table = $self->new_table($columns, $rows, { data_table => 1, download_table => 1, sorting => [ 'Variant1 asc' ], data_table_config => {iDisplayLength => 25} });
+  my $html = '<div style="margin:0px 0px 50px;padding:0px"><h2>Pairwise LD</h2>'.$table->render.'</div>';
 
-  return qq{<div class="js_panel">$html</div>};
-=end
-=cut
+ return qq{<div class="js_panel">$html</div>};
+
 }
 
 
