@@ -20,7 +20,7 @@ package EnsEMBL::Web::Component::Variation::PairwiseLD;
 
 use strict;
 use HTML::Entities qw(encode_entities);
-
+use POSIX qw(floor);
 use base qw(EnsEMBL::Web::Component::Variation);
 
 sub _init {
@@ -43,7 +43,7 @@ sub content {
   my $id  = $self->id;  
   my $second_variant_name = '';
   return sprintf('
-    <h2>Pairwise linkage disequilibrium</h2>
+    <h2>Pairwise linkage disequilibrium data by population</h2>
     <div class="navbar print_hide" style="padding-left:5px">
       <input type="hidden" class="panel_type" value="Content" />
       <form class="update_panel" action="#">
@@ -72,11 +72,12 @@ sub format_parent {
 
 sub get_table_headings {
   return [
-    { key => 'Variant1', title => 'Focus Variant', sort => '' },
-    { key => 'Variant2', title => 'Variant 2', sort => '' },
     { key => 'Population', title => 'Population', sort => 'html', align => 'left' },    
-    { key => 'r2', title => 'r<sup>2</sup>', sort => 'numeric', align => 'left' },
-    { key => 'd_prime', title => q{D'}, sort => 'numeric' },
+    { key => 'Description', title => 'Description', sort => 'string', align => 'left' },
+    { key => 'Variant1', title => 'Focus Variant', sort => 'string' },
+    { key => 'Variant2', title => 'Variant 2', sort => 'string' },
+    { key => 'r2', title => 'r<sup>2</sup>', sort => 'numeric', align => 'center' },
+    { key => 'd_prime', title => q{D'}, sort => 'numeric', align => 'center' },
   ];
 }
 
@@ -86,6 +87,9 @@ sub content_results {
   my $variant      = $object->Obj;
   my $hub          = $self->hub;
   my $species_defs = $hub->species_defs;
+
+
+  my @colour_gradient = ('ffffff', $hub->colourmap->build_linear_gradient(41, 'mistyrose', 'pink', 'indianred2', 'red'));
 
   my $focus_variant_name  = $variant->name;
   my $second_variant_name = $hub->param('second_variant_name');
@@ -136,6 +140,35 @@ sub content_results {
   my $rows = [];
 
   foreach my $ld_population (@ld_populations) {
+    my $description = $ld_population->description;
+    $description ||= '-';
+
+    if (length $description > 30) {
+      my $full_desc = $self->strip_HTML($description);
+      while ($description =~ m/^.{30}.*?(\s|\,|\.)/g) {
+        $description = sprintf '%s... <span class="_ht ht small" title="%s">(more)</span>', substr($description, 0, (pos $description) - 1), $full_desc;
+        last;
+      }
+    }
+    my $pop_name  = $ld_population->name;
+    my $pop_dbSNP = $ld_population->get_all_synonyms('dbSNP');
+
+    my $pop_label = $pop_name;
+    if ($pop_label =~ /^.+\:.+$/ and $pop_label !~ /(http|https):/) {
+      my @composed_name = split(':', $pop_label);
+      $composed_name[$#composed_name] = '<b>'.$composed_name[$#composed_name].'</b>';
+      $pop_label = join(':',@composed_name);
+    }
+
+    # Population external links
+    my $pop_url;
+    if ($pop_name =~ /^1000GENOMES/) {
+      $pop_url = $self->hub->get_ExtURL_link($pop_label, '1KG_POP', $pop_name);
+    }
+    else {
+      $pop_url = $pop_dbSNP ? $self->hub->get_ExtURL_link($pop_label, 'DBSNPPOP', $pop_dbSNP->[0]) : $pop_label;
+    }
+
     my @ld_values = @{$ldfca->fetch_by_VariationFeatures(\@vfs, $ld_population)->get_all_ld_values(1)};  
     foreach my $hash (@ld_values) {
       my $variation1 = $hash->{variation_name1};
@@ -152,17 +185,24 @@ sub content_results {
       my $row = {
         Variant1 => $variation1, 
         Variant2 => $variation2,
-        Population => $ld_population->name,  
-        r2 => $r2,
-        d_prime => $d_prime,
+        Population => $pop_url,
+        Description => $description, 
+        r2 => {
+          value => $r2,
+          style => "background-color:#".($r2 eq '-' ? 'ffffff' : $colour_gradient[floor($r2*40)]),
+        },
+        d_prime => {
+          value => $d_prime,
+          style => "background-color:#".($d_prime eq '-' ? 'ffffff' : $colour_gradient[floor($d_prime*40)]),
+        },
       };
       push @$rows, $row;
     } 
   }
  
   my $columns = $self->get_table_headings;
-  my $table = $self->new_table($columns, $rows, { data_table => 1, download_table => 1, sorting => [ 'Variant1 asc' ], data_table_config => {iDisplayLength => 25} });
-  my $html = '<div style="margin:0px 0px 50px;padding:0px"><h2>Pairwise LD</h2>'.$table->render.'</div>';
+  my $table = $self->new_table($columns, $rows, { data_table => 1, download_table => 1, sorting => [ 'd_prime dec' ] });
+  my $html = '<div style="margin:0px 0px 50px;padding:0px">'.$table->render.'</div>';
 
  return qq{<div class="js_panel">$html</div>};
 
