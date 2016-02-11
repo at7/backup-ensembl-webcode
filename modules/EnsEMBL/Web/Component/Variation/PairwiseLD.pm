@@ -34,7 +34,7 @@ sub content {
   my $object = $self->object;
   my $variant = $object->Obj;
   my $variant_name = $variant->name;
-
+  my $example_variant = ($variant_name eq 'rs678') ? 'rs549570' : 'rs678';
   my $hub    = $self->hub;
   
   return $self->_info('A unique location can not be determined for this Variation', $object->not_unique_location) if $object->not_unique_location;  
@@ -54,11 +54,11 @@ sub content {
         <input type="hidden" name="url" value="%s" />
         <input type="hidden" name="element" value=".results" />
         <input class="fbutton" type="submit" value="Compute" />
-        <small>(e.g. rs678)</small>
+        <small>(e.g. %s)</small>
       </form>
     </div>
     <div class="results">%s</div>
-  ', $variant_name, $second_variant_name, $id, $url, $self->content_results);
+  ', $variant_name, $second_variant_name, $id, $url, $example_variant, $self->content_results);
 
 }
 
@@ -67,24 +67,23 @@ sub format_parent {
   return ($parent_data && $parent_data->{'Name'}) ? $parent_data->{'Name'} : '-';
 }
 
-sub get_table_headings {
-  return [
-    { key => 'Population', title => 'Population', sort => 'html', align => 'left' },    
-    { key => 'Description', title => 'Description', sort => 'string', align => 'left' },
-    { key => 'Variant1', title => 'Focus Variant', sort => 'string' },
-    { key => 'Variant2', title => 'Variant 2', sort => 'string' },
-    { key => 'LocationVariant2', title => 'Variant 2 Location', sort => 'string' },
-    { key => 'r2', title => 'r<sup>2</sup>', sort => 'numeric', align => 'center' },
-    { key => 'd_prime', title => q{D'}, sort => 'numeric', align => 'center' },
-  ];
-}
-
 sub content_results {
   my $self         = shift;
   my $object       = $self->object;
   my $variant      = $object->Obj;
   my $hub          = $self->hub;
   my $species_defs = $hub->species_defs;
+  my $glossary = $hub->glossary_lookup;
+  my $tables_with_no_rows = 0;
+  my $table               = $self->new_table([
+    { key => 'Population', title => 'Population', sort => 'html', align => 'left' },    
+    { key => 'Description', title => 'Description', sort => 'string', align => 'left' },
+    { key => 'Variant1', title => 'Focus Variant', sort => 'string' },
+    { key => 'Variant2', title => 'Variant 2', sort => 'string' },
+    { key => 'LocationVariant2', title => 'Variant 2 Location', sort => 'string' },
+    { key => 'r2', title => 'r<sup>2</sup>', sort => 'numeric', align => 'center', help => $glossary->{'r2'} },
+    { key => 'd_prime', title => q{D'}, sort => 'numeric', align => 'center',  help => $glossary->{"D'"} },
+  ], [], { data_table => 1, download_table => 1, sorting => [ 'd_prime dec' ] } );
 
   my @colour_gradient = ('ffffff', $hub->colourmap->build_linear_gradient(41, 'mistyrose', 'pink', 'indianred2', 'red'));
 
@@ -199,8 +198,7 @@ sub content_results {
       my $r2 = $hash->{r2};
       my $d_prime = $hash->{d_prime};
       my $population_id = $hash->{population_id};
-
-      my $row = {
+      $table->add_row({
         Variant1 => $variation1, 
         Variant2 => qq{<a href="$var_url">$variation2</a>},,
         LocationVariant2 => sprintf('<a href="%s">%s:%s</a>', $loc_url, $vf2->seq_region_name, $start == $end ? $start : "$start-$end"),
@@ -214,23 +212,26 @@ sub content_results {
           value => $d_prime,
           style => "background-color:#".($d_prime eq '-' ? 'ffffff' : $colour_gradient[floor($d_prime*40)]),
         },
-      };
-      push @$rows, $row;
+      });
     } 
   }
- 
-  my $columns = $self->get_table_headings;
-  my $table = $self->new_table($columns, $rows, { data_table => 1, download_table => 1, sorting => [ 'd_prime dec' ] });
-  my $html = '<div style="margin:0px 0px 50px;padding:0px">'.$table->render.'</div>';
-
-  return qq{<div class="js_panel">$html</div>};
-
+     
+  my $html = '<div style="margin:0px 0px 25px;padding:0px">'.$table->render.'</div>';
+  my $no_results_html = $self->_warning('No Pairwise Linkage Disequilibrium Data', qq{
+      <p>A variant may have no LD data in a given population for the following reasons:</p>
+      <ul>
+        <li>Variant $second_variant_name has a minor allele frequency close or equal to 0</li>
+        <li>Variant $second_variant_name does not have enough genotypes to calculate LD values</li>
+        <li>Estimated r<sup>2</sup> values are below 0.05 and have been filtered out</li>
+      </ul>
+    });
+  return $table->has_rows ? qq{<div class="js_panel">$html</div>} : qq{<div class="js_panel">$no_results_html</div>};
 }
 
 sub warning_message {
   my $self   = shift;
   my $variant = shift;
-  return $self->_warning('Warning', qq{Could not fetch variant object for <b>$variant</b>});
+  return $self->_warning('No variant object', qq{Could not fetch variant object for <b>$variant</b>});
 }
 
 1;
