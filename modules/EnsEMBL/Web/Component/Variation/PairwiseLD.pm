@@ -39,7 +39,7 @@ sub content {
   
   return $self->_info('A unique location can not be determined for this Variation', $object->not_unique_location) if $object->not_unique_location;  
 
-  my $url = $self->ajax_url('results', { focus_variant_name => $variant_name, second_variant_name => undef });  
+  my $url = $self->ajax_url('results', { second_variant_name => undef });  
   my $id  = $self->id;  
   my $second_variant_name = '';
   return sprintf('
@@ -50,7 +50,6 @@ sub content {
         <label for="variant">Focus variant: %s</label><br>
         <label for="variant">Enter the name for the second variant:</label>
         <input type="text" name="second_variant_name" id="variant" value="%s" size="30"/>
-        <input type="hidden" name="focus_variant_name" value="%s" />
         <input type="hidden" name="panel_id" value="%s" />
         <input type="hidden" name="url" value="%s" />
         <input type="hidden" name="element" value=".results" />
@@ -59,16 +58,14 @@ sub content {
       </form>
     </div>
     <div class="results">%s</div>
-  ', $variant_name, $second_variant_name, $variant_name, $id, $url, $self->content_results);
+  ', $variant_name, $second_variant_name, $id, $url, $self->content_results);
 
 }
-
 
 sub format_parent {
   my ($self, $parent_data) = @_;
   return ($parent_data && $parent_data->{'Name'}) ? $parent_data->{'Name'} : '-';
 }
-
 
 sub get_table_headings {
   return [
@@ -76,6 +73,7 @@ sub get_table_headings {
     { key => 'Description', title => 'Description', sort => 'string', align => 'left' },
     { key => 'Variant1', title => 'Focus Variant', sort => 'string' },
     { key => 'Variant2', title => 'Variant 2', sort => 'string' },
+    { key => 'LocationVariant2', title => 'Variant 2 Location', sort => 'string' },
     { key => 'r2', title => 'r<sup>2</sup>', sort => 'numeric', align => 'center' },
     { key => 'd_prime', title => q{D'}, sort => 'numeric', align => 'center' },
   ];
@@ -87,7 +85,6 @@ sub content_results {
   my $variant      = $object->Obj;
   my $hub          = $self->hub;
   my $species_defs = $hub->species_defs;
-
 
   my @colour_gradient = ('ffffff', $hub->colourmap->build_linear_gradient(41, 'mistyrose', 'pink', 'indianred2', 'red'));
 
@@ -109,7 +106,8 @@ sub content_results {
   my $second_variant = $va->fetch_by_name($second_variant_name);
 
   if (!$second_variant) {
-    return qq{<div>Could not fetch variant object for variant $second_variant_name</div>};
+    my $html = $self->warning_message($second_variant_name);
+    return qq{<div class="js_panel">$html</div>};
   }
 
   my $source = $variant->source_name;
@@ -169,22 +167,43 @@ sub content_results {
       $pop_url = $pop_dbSNP ? $self->hub->get_ExtURL_link($pop_label, 'DBSNPPOP', $pop_dbSNP->[0]) : $pop_label;
     }
 
-    my @ld_values = @{$ldfca->fetch_by_VariationFeatures(\@vfs, $ld_population)->get_all_ld_values(1)};  
+    my @ld_values = @{$ldfca->fetch_by_VariationFeatures(\@vfs, $ld_population)->get_all_ld_values()};  
     foreach my $hash (@ld_values) {
+      my $vf1 = $hash->{'variation1'};
+      my $vf2 = $hash->{'variation2'};
       my $variation1 = $hash->{variation_name1};
       my $variation2 = $hash->{variation_name2};
       next unless ($variation1 eq $focus_variant_name || $variation2 eq $focus_variant_name);
       next unless ($variation1 eq $second_variant_name || $variation2 eq $second_variant_name);
       if ($variation1 ne $focus_variant_name) {
         ($variation1, $variation2) = ($variation2, $variation1);
+        ($vf1, $vf2) = ($vf2, $vf1);
       }
+      my $var_url = $hub->url({
+        type   => 'Variation',
+        action => 'Explore',
+        vdb    => 'variation',
+        v      => $second_variant_name,
+        vf     => $vf2->dbID,
+      });
+      # switch start and end to avoid faff
+      my ($start, $end) = ($vf2->seq_region_start, $vf2->seq_region_end);
+         ($start, $end) = ($end, $start) if $start > $end;
+      my $loc_url = $hub->url({
+        type   => 'Location',
+        action => 'View',
+        db     => 'core',
+        v      => $second_variant_name,
+        vf     => $vf2->dbID,
+      });
       my $r2 = $hash->{r2};
       my $d_prime = $hash->{d_prime};
       my $population_id = $hash->{population_id};
 
       my $row = {
         Variant1 => $variation1, 
-        Variant2 => $variation2,
+        Variant2 => qq{<a href="$var_url">$variation2</a>},,
+        LocationVariant2 => sprintf('<a href="%s">%s:%s</a>', $loc_url, $vf2->seq_region_name, $start == $end ? $start : "$start-$end"),
         Population => $pop_url,
         Description => $description, 
         r2 => {
@@ -204,27 +223,14 @@ sub content_results {
   my $table = $self->new_table($columns, $rows, { data_table => 1, download_table => 1, sorting => [ 'd_prime dec' ] });
   my $html = '<div style="margin:0px 0px 50px;padding:0px">'.$table->render.'</div>';
 
- return qq{<div class="js_panel">$html</div>};
+  return qq{<div class="js_panel">$html</div>};
 
-}
-
-
-sub get_all_populations {
-  my $self   = shift;
-  my $sample = shift;
-
-  my @pop_names = map { $_->name } @{$sample->get_all_Populations };
-  
-  return (scalar @pop_names > 0) ? join('; ',sort(@pop_names)) : '-';
 }
 
 sub warning_message {
   my $self   = shift;
-  my $sample = shift;
-  
-  return $self->_warning('Not found', qq{No genotype associated with this variant was found for the sample name '<b>$sample</b>'!});
+  my $variant = shift;
+  return $self->_warning('Warning', qq{Could not fetch variant object for <b>$variant</b>});
 }
-
-
 
 1;
