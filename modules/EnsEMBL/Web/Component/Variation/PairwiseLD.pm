@@ -62,11 +62,6 @@ sub content {
 
 }
 
-sub format_parent {
-  my ($self, $parent_data) = @_;
-  return ($parent_data && $parent_data->{'Name'}) ? $parent_data->{'Name'} : '-';
-}
-
 sub content_results {
   my $self         = shift;
   my $object       = $self->object;
@@ -105,16 +100,10 @@ sub content_results {
   my $second_variant = $va->fetch_by_name($second_variant_name);
 
   if (!$second_variant) {
-    my $html = $self->warning_message($second_variant_name);
+    my $html = $self->_warning('No variant object', qq{Could not fetch variant object for <b>$second_variant_name</b>});
     return qq{<div class="js_panel">$html</div>};
   }
 
-  my $source = $variant->source_name;
-  my $max_distance = $hub->param('max_distance') || 50000;
-  my $min_r2 = defined $hub->param('min_r2') ? $hub->param('min_r2') : 0.8;
-  my $min_d_prime = defined $hub->param('min_d_prime') ? $hub->param('min_d_prime') : 0.8;
-  my $min_p_log = $hub->param('min_p_log');
-  my $only_phenotypes = $hub->param('only_phenotypes') eq 'yes';
   my %mappings = %{$object->variation_feature_mapping}; # determine correct SNP location
   my ($vf, $loc);
 
@@ -130,9 +119,18 @@ sub content_results {
       last;
     }
   }
-
+  my $seq_region_name = $vf->seq_region_name;
   my $vfs2 = $second_variant->get_all_VariationFeatures;
-  my @vfs = ($vf, @$vfs2);
+  my @vfs = ($vf);
+  foreach my $vf2 (@$vfs2) {
+    my $seq_region_name2 = $vf2->seq_region_name;
+    if ($seq_region_name ne $seq_region_name2) {
+      my $html = $self->_warning('No Pairwise Linkage Disequilibrium Data', qq{Could not compute LD data because variants <b>$focus_variant_name</b> and <b>$second_variant_name</b> are on different chromosomes.});
+      return qq{<div class="js_panel">$html</div>};
+    }   
+    push @vfs, $vf2;
+  }  
+
   my @ld_populations = @{$pa->fetch_all_LD_Populations};
   my $rows = [];
 
@@ -226,12 +224,6 @@ sub content_results {
       </ul>
     });
   return $table->has_rows ? qq{<div class="js_panel">$html</div>} : qq{<div class="js_panel">$no_results_html</div>};
-}
-
-sub warning_message {
-  my $self   = shift;
-  my $variant = shift;
-  return $self->_warning('No variant object', qq{Could not fetch variant object for <b>$variant</b>});
 }
 
 1;
