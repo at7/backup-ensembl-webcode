@@ -25,7 +25,8 @@ use strict;
 use EnsEMBL::Web::Utils::FormatText qw(helptip);
 use Encode qw(encode decode);
 use HTML::Entities;
-
+use Net::FTP;
+use URI;
 use base qw(EnsEMBL::Web::Component::Variation);
 
 sub _init {
@@ -734,6 +735,14 @@ sub clinical_significance {
 sub change_tolerance {
   my $self = shift;
   my $object = $self->object;
+
+  my $file = 'ftp://ftp.ebi.ac.uk/ensemblorg/pub/release-99/compara/conservation_scores/100_mammals.gerp_conservation_score/gerp_conservation_scores.homo_sapiens.GRCh38.bw';
+  my $uri = URI->new($file);
+  my $ftp = Net::FTP->new($uri->host) or die "Connection error($uri): $@";
+  $ftp->login('anonymous', 'guest') or die "Login error", $ftp->message;
+  my $exists = defined $ftp->size($uri->path);
+  $ftp->quit;
+
   my ($CADD_scores, $CADD_source) = @{$object->CADD_score};
   my ($GERP_score, $GERP_source) = @{$object->GERP_score};
 
